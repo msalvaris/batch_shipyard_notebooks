@@ -1,0 +1,8 @@
+%%writefile script/docker/dockerfile
+# Dockerfile for CIFAR 10 CNTK example
+
+FROM microsoft/cntk:2.0.rc1-gpu-python3.5-cuda8.0-cudnn5.1
+MAINTAINER Mathew Salvaris
+ADD code /code
+ENV PATH /root/anaconda3/bin:$PATH
+CMD [ "/bin/bash" ]
