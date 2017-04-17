@@ -37,7 +37,11 @@ def convnet_cifar10(num_convolution_layers=2, minibatch_size=64, max_epochs=30, 
     print("""Running network with: 
                 {num_convolution_layers} convolution layers
                 {minibatch_size}  minibatch size
-                for {max_epochs} epochs""")
+                for {max_epochs} epochs""".format(
+                    num_convolution_layers=num_convolution_layers,
+                    minibatch_size=minibatch_size,
+                    max_epochs=max_epochs
+                ))
     
     image_height = 32
     image_width  = 32
