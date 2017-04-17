@@ -15,12 +15,44 @@ from cntk import learners, io, logging, layers, Trainer, learning_rate_schedule
 import _cntk_py
 import cntk
 import fire
+from uuid import uuid4
+from toolz import pipe
 
 
 # Paths relative to current python file.
 abs_path   = os.getcwd()
 data_path  = abs_path
 model_path = os.path.join(abs_path, "Models")
+
+
+def _create_env_variable_appender(env_var_name):
+    def env_var_appender(identifier):
+        env_var_value = os.environ.get(env_var_name, None)
+        if env_var_value is None:
+            return identifier
+        else:
+            return '{}_{}'.format(identifier, env_var_value)
+    return env_var_appender
+
+
+_append_task_id = _create_env_variable_appender('AZ_BATCH_TASK_ID') # Append task id if the env variable exists
+_append_job_id = _create_env_variable_appender('AZ_BATCH_JOB_ID')   # Append job id if the env variable exists
+
+
+def _get_unique_id():
+    """ Returns a unique identifier
+
+    If executed in a batch environment it will incorporate the job and task id
+    """
+    return pipe(str(uuid4())[:8],
+                _append_task_id,
+                _append_job_id)
+
+
+def _save_results(test_result, filename, **kwargs):
+    results_dict = {'test_metric':test_result, 'parameters': kwargs}
+    with open(filename, 'w') as outfile:
+        json.dump(results_dict, outfile)
 
 
 # Define the reader for both training and evaluation action.
@@ -57,7 +89,7 @@ def convnet_cifar10(num_convolution_layers=2, minibatch_size=64, max_epochs=30, 
 
     print('Creating NN model')
     with layers.default_options(activation=relu, pad=True): 
-        z = layers.Sequential([
+        model = layers.Sequential([
             layers.For(range(num_convolution_layers), lambda : [
                 layers.Convolution2D((3,3), 64), 
                 layers.Convolution2D((3,3), 64), 
@@ -70,8 +102,8 @@ def convnet_cifar10(num_convolution_layers=2, minibatch_size=64, max_epochs=30, 
             layers.Dense(num_output_classes, activation=None)
         ])(scaled_input)
     
-    ce = cross_entropy_with_softmax(z, label_var)
-    pe = classification_error(z, label_var)
+    ce = cross_entropy_with_softmax(model, label_var)
+    pe = classification_error(model, label_var)
 
     reader_train = create_reader(os.path.join(data_path, 'Train_cntk_text.txt'), True, input_dim, num_output_classes)
 
@@ -86,10 +118,10 @@ def convnet_cifar10(num_convolution_layers=2, minibatch_size=64, max_epochs=30, 
     l2_reg_weight          = 0.002
 
     # Instantiate the trainer object to drive the model training
-    learner = learners.momentum_sgd(z.parameters, lr_schedule, mm_schedule,
+    learner = learners.momentum_sgd(model.parameters, lr_schedule, mm_schedule,
                                         l2_regularization_weight = l2_reg_weight)
     progress_printer = logging.ProgressPrinter(tag='Training', num_epochs=max_epochs)
-    trainer = Trainer(z, (ce, pe), learner, progress_printer)
+    trainer = Trainer(model, (ce, pe), learner, progress_printer)
 
     # define mapping from reader streams to network inputs
     input_map = {
@@ -97,7 +129,7 @@ def convnet_cifar10(num_convolution_layers=2, minibatch_size=64, max_epochs=30, 
         label_var  : reader_train.streams.labels
     }
 
-    logging.log_number_of_parameters(z) ; print()
+    logging.log_number_of_parameters(model) ; print()
 
     print('Starting training')
     # Get minibatches of images to train with and perform model training
@@ -109,7 +141,6 @@ def convnet_cifar10(num_convolution_layers=2, minibatch_size=64, max_epochs=30, 
             sample_count += trainer.previous_minibatch_sample_count         # count samples processed so far
 
         trainer.summarize_training_progress()
-        z.save(os.path.join(model_path, "ConvNet_CIFAR10_{}.dnn".format(epoch)))
     
     # Load test data
     reader_test = create_reader(os.path.join(data_path, 'Test_cntk_text.txt'), False, input_dim, num_output_classes)
@@ -145,9 +176,16 @@ def convnet_cifar10(num_convolution_layers=2, minibatch_size=64, max_epochs=30, 
     print("Final Results: Minibatch[1-{}]: errs = {:0.2f}% * {}".format(minibatch_index+1, (metric_numer*100.0)/metric_denom, metric_denom))
     print("")
 
-    return metric_numer/metric_denom
+    # Save model and results
+    unique_path = os.path.join(model_path, _get_unique_id())
+    model.save(os.path.join(unique_path, "ConvNet_CIFAR10_model.dnn"))
+    _save_results((metric_numer*100.0)/metric_denom,
+                  os.path.join(unique_path, "model_results.json"),
+                  num_convolution_layers=num_convolution_layers, 
+                  minibatch_size=minibatch_size, 
+                  max_epochs=max_epochs)
 
-
+    
 if __name__=='__main__':
     fire.Fire(convnet_cifar10)
 
